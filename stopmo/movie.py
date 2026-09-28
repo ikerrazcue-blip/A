@@ -380,7 +380,7 @@ class Element:
                      self.shadow)
 
 
-@functools.lru_cache(maxsize=700)
+@functools.lru_cache(maxsize=260)
 def _xf(spr, scale_q, angle_q):
     img = gfx.affine(spr.img, scale_q / 1000.0, angle_q / 10.0)
     sh = gfx.affine(spr.shadow, scale_q / 1000.0, angle_q / 10.0, resample=Image.BILINEAR) \
@@ -388,7 +388,7 @@ def _xf(spr, scale_q, angle_q):
     return img, sh
 
 
-@functools.lru_cache(maxsize=700)
+@functools.lru_cache(maxsize=260)
 def _shadow_rgba(spr, scale_q, angle_q, op_q):
     _, sh = _xf(spr, scale_q, angle_q)
     op = op_q / 100.0
@@ -788,21 +788,33 @@ class Movie:
         sf.write(wav, audio, SR)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
                "-framerate", str(FPS), "-i", "-", "-i", wav, "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-               "-pix_fmt", "yuv420p", "-r", str(OUT_FPS), "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+               "-pix_fmt", "yuv420p", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                "-c:a", "aac", "-b:a", "160k", "-ac", "1", "-ar", "48000",
                "-shortest", "-movflags", "+faststart", path]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         global _MOVIE
         _MOVIE = self
-        frames = range(f0, f1)
+        frames = list(range(f0, f1))
         if workers > 1:
             import multiprocessing as mp
             ctx = mp.get_context("fork")
-            with ctx.Pool(workers) as pool:
-                for k, buf in enumerate(pool.imap(_render_worker, frames, chunksize=4)):
-                    proc.stdin.write(buf)
-                    if k % 240 == 0:
-                        print(f"  frame {k}/{len(frames)}", flush=True)
+            # double-buffered batches: never more than 2 batches of frames in memory, so a slow
+            # encoder applies back-pressure instead of letting finished frames pile up
+            B = 48
+            batches = [frames[i:i + B] for i in range(0, len(frames), B)]
+            with ctx.Pool(workers, maxtasksperchild=400) as pool:
+                pending = pool.map_async(_render_worker, batches[0], chunksize=4)
+                done = 0
+                for bi in range(len(batches)):
+                    res = pending.get()
+                    if bi + 1 < len(batches):
+                        pending = pool.map_async(_render_worker, batches[bi + 1], chunksize=4)
+                    for buf in res:
+                        proc.stdin.write(buf)
+                    done += len(res)
+                    del res
+                    if bi % 10 == 0:
+                        print(f"  frame {done}/{len(frames)}", flush=True)
         else:
             for fi in frames:
                 proc.stdin.write(_render_worker(fi))
