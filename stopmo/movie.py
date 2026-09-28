@@ -31,15 +31,27 @@ VOICE_MODELS = {
 }
 
 # words the TTS should read differently from how they are written on screen
-PRONOUNCE = {}
+PRONOUNCE = {
+    r"\bphysis\b": "fýsis",
+    r"\bPhysis\b": "Fýsis",
+}
+
+# the deep narrator voice chosen for the videos
+DEEP = dict(pitch=100, formant=0.92, warmth=1.0, room=0.06)
+DEEPER = dict(pitch=90, formant=0.89, warmth=1.0, room=0.06)
 
 
 # ----------------------------------------------------------------------------
 # voice
 # ----------------------------------------------------------------------------
 class Voice:
-    def __init__(self, name="davefx", speed=0.9, target_rms=0.105):
+    """Piper voice (via sherpa-onnx) + optional deepening (Praat PSOLA: lower pitch and formants),
+    warmth EQ and a touch of room, so it sounds grave and full."""
+
+    def __init__(self, name="davefx", speed=0.9, target_rms=0.105, pitch=None, formant=1.0, warmth=0.0,
+                 room=0.0):
         self.name, self.speed, self.target_rms = name, speed, target_rms
+        self.pitch, self.formant, self.warmth, self.room = pitch, formant, warmth, room
         self._tts = None
 
     def _engine(self):
@@ -57,7 +69,8 @@ class Voice:
     def synth(self, text):
         """Return float32 mono audio at SR for `text` (cached on disk)."""
         sid = VOICE_MODELS[self.name][2]
-        key = hashlib.sha1(f"{self.name}|{sid}|{self.speed}|{text}".encode()).hexdigest()[:20]
+        fx = f"{self.pitch}|{self.formant}|{self.warmth}|{self.room}"
+        key = hashlib.sha1(f"{self.name}|{sid}|{self.speed}|{fx}|{text}".encode()).hexdigest()[:20]
         os.makedirs(CACHE, exist_ok=True)
         path = os.path.join(CACHE, key + ".wav")
         if os.path.exists(path):
@@ -70,9 +83,54 @@ class Voice:
             fr = Fraction(SR, a.sample_rate)  # 48000/22050 = 320/147
             x = resample_poly(x, fr.numerator, fr.denominator).astype(np.float32)
         x = _trim(x)
+        if self.pitch or abs(self.formant - 1.0) > 1e-3:
+            x = deepen(x, SR, self.formant, self.pitch or 0.0)
+        if self.warmth:
+            x = shelf(x, SR, 160, 3.0 * self.warmth, "low")
+            x = shelf(x, SR, 6500, -2.0 * self.warmth, "high")
+        if self.room:
+            x = small_room(x, self.room)
+        x = _trim(x.astype(np.float32), thr_rel=0.02, keep=0.04)
         x = _normalize(x, self.target_rms)
         sf.write(path, x, SR)
         return x
+
+
+def deepen(x, sr, formant=0.92, pitch=100.0, prange=1.0):
+    import parselmouth
+    from parselmouth.praat import call
+    snd = parselmouth.Sound(x.astype(np.float64), sampling_frequency=sr)
+    out = call(snd, "Change gender", 60, 400, formant, pitch, prange, 1.0)
+    return out.values[0].astype(np.float32)
+
+
+def shelf(x, sr, f0, gain_db, kind="low", q=0.707):
+    from scipy.signal import lfilter
+    A = 10 ** (gain_db / 40)
+    w0 = 2 * np.pi * f0 / sr
+    alpha = np.sin(w0) / (2 * q)
+    c = np.cos(w0)
+    sA = 2 * np.sqrt(A) * alpha
+    if kind == "low":
+        b = [A * ((A + 1) - (A - 1) * c + sA), 2 * A * ((A - 1) - (A + 1) * c), A * ((A + 1) - (A - 1) * c - sA)]
+        a = [(A + 1) + (A - 1) * c + sA, -2 * ((A - 1) + (A + 1) * c), (A + 1) + (A - 1) * c - sA]
+    else:
+        b = [A * ((A + 1) + (A - 1) * c + sA), -2 * A * ((A - 1) + (A + 1) * c), A * ((A + 1) + (A - 1) * c - sA)]
+        a = [(A + 1) - (A - 1) * c + sA, 2 * ((A - 1) - (A + 1) * c), (A + 1) - (A - 1) * c - sA]
+    return lfilter(np.array(b) / a[0], np.array(a) / a[0], x).astype(np.float32)
+
+
+def small_room(x, mix=0.07, secs=0.35, seed=5):
+    from scipy.signal import fftconvolve, lfilter
+    rng = np.random.default_rng(seed)
+    n = int(secs * SR)
+    t = np.arange(n) / SR
+    ir = rng.standard_normal(n) * np.exp(-t * 14)
+    ir = lfilter([0.3], [1, -0.6], ir)
+    ir /= np.sqrt((ir ** 2).sum())
+    wet = fftconvolve(x, ir)[: len(x) + n]
+    dry = np.concatenate([x, np.zeros(len(wet) - len(x), np.float32)])
+    return ((1 - mix) * dry + mix * wet).astype(np.float32)
 
 
 def _trim(x, thr_rel=0.03, keep=0.03):
@@ -310,9 +368,10 @@ class Element:
                 p = (t - t0) / d
                 rot += a * math.sin(p * math.pi * 4) * (1 - p)
         j = self.jitter * (1 + 2.5 * lift)
-        jx = (_rand(self.id, fi, "x") - 0.5) * 1.6 * j
-        jy = (_rand(self.id, fi, "y") - 0.5) * 1.6 * j
-        jr = (_rand(self.id, fi, "r") - 0.5) * 0.5 * j
+        fj = fi if lift > 0.05 else fi // self.scene.movie.boil  # resting pieces "boil" on twos
+        jx = (_rand(self.id, fj, "x") - 0.5) * 1.6 * j
+        jy = (_rand(self.id, fj, "y") - 0.5) * 1.6 * j
+        jr = (_rand(self.id, fj, "r") - 0.5) * 0.5 * j
         scale *= 1 + 0.035 * lift
         spr = self.current_sprite(t)
         if callable(spr) and not isinstance(spr, Sprite):
@@ -415,8 +474,10 @@ def background(kind, seed=0):
 
 
 class Scene:
-    def __init__(self, movie, name, bg="paper", lead=0.7, transition="wipe"):
+    def __init__(self, movie, name, bg="paper", lead=0.7, transition="wipe", sweep=False):
         self.movie = movie
+        self.sweep = sweep
+        self._swept = False
         self.name = name
         self.bg = bg
         self.cursor = lead
@@ -574,21 +635,33 @@ def subtitle_sprite(text):
 # movie
 # ----------------------------------------------------------------------------
 class Movie:
-    def __init__(self, voice="davefx", speed=0.9, subtitles=True, bg_seed=3, first_transition=None):
-        self.voice = Voice(voice, speed)
+    def __init__(self, voice="davefx", speed=0.9, subtitles=True, bg_seed=3, voice_fx=None, boil=2, shake=0.0,
+                 flicker=0.012):
+        self.voice = Voice(voice, speed, **(voice_fx or {}))
+        self.boil, self.shake, self.flicker = boil, shake, flicker
         self.scenes = []
         self.subtitles = subtitles
         self.bg_seed = bg_seed
         self._built = False
 
-    def scene(self, name, bg="paper", lead=0.7, transition="wipe"):
-        sc = Scene(self, name, bg, lead, transition)
+    def scene(self, name, bg="paper", lead=0.7, transition="wipe", sweep=False):
+        sc = Scene(self, name, bg, lead, transition, sweep)
         self.scenes.append(sc)
         self._built = False
         return sc
 
     # ---- assembly ----
     def build(self):
+        # stop-motion "sweep": at the end of a scene the animator slides every piece off the table
+        for sc in self.scenes:
+            if sc.sweep and not sc._swept:
+                t0 = sc.cursor + 0.05
+                live = [e for e in sc.elements if e.until is None]
+                live.sort(key=lambda e: -e.rest["x"])  # right-most first
+                for i, e in enumerate(live):
+                    e.leave(t0 + 0.035 * i, "slide_l", 0.5)
+                sc.tail = max(sc.tail, 0.62 + 0.035 * len(live))
+                sc._swept = True
         self.starts = []
         t = 0.0
         for sc in self.scenes:
@@ -681,8 +754,9 @@ class Movie:
         si = max(0, bisect.bisect_right(self.starts, t) - 1)
         sc = self.scenes[si]
         canvas = sc.frame(t - self.starts[si], fi)
-        dx = int(round((_rand("cam", fi, "x") - 0.5) * 2.4))
-        dy = int(round((_rand("cam", fi, "y") - 0.5) * 2.4))
+        fb = fi // self.boil
+        dx = int(round((_rand("cam", fb, "x") - 0.5) * 2 * self.shake))
+        dy = int(round((_rand("cam", fb, "y") - 0.5) * 2 * self.shake))
         img = canvas.crop((M + dx, M + dy, M + dx + W, M + dy + H))
         for b in self.wipes:
             if b - 0.5 <= t < b + 0.5:
@@ -694,7 +768,7 @@ class Movie:
                 gfx.paste_clip(img, s, (W - s.width) // 2, H - 26 - s.height)
         img = img.convert("RGB")
         # light flicker (a real lamp over a real table)
-        f = 1.0 + (_rand("flk", fi) - 0.5) * 0.022
+        f = 1.0 + (_rand("flk", fi // self.boil) - 0.5) * self.flicker
         if abs(f - 1) > 1e-3:
             img = img.point([min(255, int(v * f)) for v in range(256)] * 3)
         return img
@@ -704,7 +778,7 @@ class Movie:
             self.build()
         self.frame(int(round(t * FPS))).save(path)
 
-    def render(self, path, workers=4, crf=21, preset="medium", t0=0.0, t1=None, srt=True):
+    def render(self, path, workers=4, crf=27, preset="slow", t0=0.0, t1=None, srt=True, chapters=None):
         if not self._built:
             self.build()
         t1 = self.total if t1 is None else min(t1, self.total)
@@ -714,7 +788,8 @@ class Movie:
         sf.write(wav, audio, SR)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
                "-framerate", str(FPS), "-i", "-", "-i", wav, "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-               "-pix_fmt", "yuv420p", "-r", str(OUT_FPS), "-c:a", "aac", "-b:a", "160k", "-ac", "1",
+               "-pix_fmt", "yuv420p", "-r", str(OUT_FPS), "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+               "-c:a", "aac", "-b:a", "160k", "-ac", "1", "-ar", "48000",
                "-shortest", "-movflags", "+faststart", path]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         global _MOVIE
@@ -734,12 +809,29 @@ class Movie:
         proc.stdin.close()
         proc.wait()
         os.remove(wav)
+        if chapters:
+            add_chapters(path, chapters, self.total)
         if srt:
             self.write_srt(os.path.splitext(path)[0] + ".srt")
         return path
 
 
 _MOVIE = None
+
+
+def add_chapters(path, chapters, total):
+    """Embed an mp4 chapter list [(start_s, title)] (players like VLC show it)."""
+    meta = os.path.splitext(path)[0] + ".chapters.txt"
+    with open(meta, "w", encoding="utf-8") as f:
+        f.write(";FFMETADATA1\n")
+        for i, (st, ttl) in enumerate(chapters):
+            en = chapters[i + 1][0] if i + 1 < len(chapters) else total
+            f.write(f"[CHAPTER]\nTIMEBASE=1/1000\nSTART={int(st * 1000)}\nEND={int(en * 1000)}\ntitle={ttl}\n")
+    tmp = os.path.splitext(path)[0] + ".tmp.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, "-i", meta, "-map_metadata", "1",
+                    "-map_chapters", "1", "-c", "copy", "-movflags", "+faststart", tmp], check=True)
+    os.replace(tmp, path)
+    os.remove(meta)
 
 
 def _render_worker(fi):

@@ -241,6 +241,7 @@ class Sprite:
     def __init__(self, img, shadow_blur=5, pad=None, shadow=True):
         img = img.convert("RGBA")
         pad = pad if pad is not None else int(shadow_blur * 3 + 6)
+        self.pad = pad
         if pad:
             p = Image.new("RGBA", (img.width + 2 * pad, img.height + 2 * pad), (0, 0, 0, 0))
             p.paste(img, (pad, pad))
@@ -252,6 +253,15 @@ class Sprite:
     @property
     def size(self):
         return self.w, self.h
+
+    @property
+    def vw(self):
+        """visible width (without the shadow padding)"""
+        return self.w - 2 * self.pad
+
+    @property
+    def vh(self):
+        return self.h - 2 * self.pad
 
 
 def affine(img, scale=1.0, angle=0.0, resample=Image.BICUBIC):
