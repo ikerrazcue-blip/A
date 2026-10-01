@@ -888,6 +888,7 @@ def velocidad_media(mv):
                 tts="En esos cuatro segundos, su desplazamiento es esta flecha: veinte metros. Puedes contarlos: veinte "
                     "cuadros de la cuadrícula.")
     t_dr = l3.at("flecha")
+    t_count = l3.at("contarlos")
 
     def chord(L, t):
         g = prog(t, t_dr, 0.7, "out")
@@ -895,7 +896,7 @@ def velocidad_media(mv):
         if g > 0.9:
             L.stamp(F.tag_img(r"\c{disp}{Δ\vec{r}}\t{: 20 m}", 42, "ink", border=("disp", 3), pad=(12, 4)),
                     (P1[0] + P2[0]) / 2, P1[1] + 52)
-        n = int(min(20, max(0, (t - l3.at("contarlos")) / 0.11)))
+        n = int(min(20, max(0, (t - t_count) / 0.11)))
         for k in range(1, n + 1):
             x = P1[0] + k * ARCH_S
             L.line([(x, P1[1] - 12), (x, P1[1] + 12)], "disp_d", 3)
@@ -1071,7 +1072,7 @@ def velocidad_instantanea(mv):
             L.stamp(F.formula(r"\t{→ 0}", 34, "ink"), x0 + 40, yy, "lm")
             L.stamp(F.formula(r"\t{→ 7,81}", 34, "vel"), x0 + 270, yy, "lm")
 
-    def needle(L, t):
+    def needle(L, t, so=so):
         dt = dt_at(t)
         vx, vy = vm_of(dt)
         F.speedo_needle(L, SPX + so[0], SPY + so[1], 260, math.hypot(vx, vy))

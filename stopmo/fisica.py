@@ -316,10 +316,17 @@ class Layer:
                    (bx + ux * hl * 0.12, by + uy * hl * 0.12), (bx + uy * hw, by - ux * hw)], fill=color, alpha=alpha)
         return self
 
-    def stamp(self, img, x, y, anchor="c", alpha=1.0):
-        """paste a PIL RGBA image (labels, formulas) after the vector part."""
-        if img is None or alpha <= 0.003:
+    def stamp(self, img, x, y, anchor="c", alpha=1.0, reveal=1.0):
+        """paste a PIL RGBA image (labels, formulas) after the vector part. reveal < 1 shows only the left part
+        (a 'being written' effect)."""
+        if img is None or alpha <= 0.003 or reveal <= 0.0:
             return self
+        if reveal < 1.0:
+            full_w = img.width
+            img = img.crop((0, 0, max(1, int(full_w * reveal)), img.height))
+            pad = Image.new("RGBA", (full_w, img.height), (0, 0, 0, 0))
+            pad.paste(img, (0, 0))
+            img = pad
         w, h = img.size
         ax = {"c": 0.5, "l": 0.0, "r": 1.0}[anchor[0] if anchor[0] in "clr" else "c"]
         ay = 0.5
@@ -705,8 +712,19 @@ def _read_group(s, i):
 def _parse(s, size, color):
     items = []
     i = 0
+    last = None          # kind of the previous token: None (start), "op", "open" or "atom"
     while i < len(s):
         ch = s[i]
+        if ch in "+−-" and last in (None, "op", "open"):
+            # a sign, not an operation: no spaces around it ("v = −4", "(−9,8)")
+            items.append(_Text("−" if ch == "-" else ch, size, color))
+            i += 1
+            last = "open"
+            continue
+        if ch not in " ":
+            last = "op" if ch in _OPS else ("open" if ch in "([{" else "atom")
+            if ch == "\\" and s[i + 1:i + 2] in (",", ";") :
+                last = last
         if ch == "\\":
             m = re.match(r"\\([a-zA-Z]+|.)", s[i:])
             cmd = m.group(1)
@@ -742,12 +760,14 @@ def _parse(s, size, color):
                 items.append(_Space(size * 0.3))
             elif cmd == "quad":
                 items.append(_Space(size * 0.9))
+            elif cmd == "qquad":
+                items.append(_Space(size * 1.8))
             elif cmd == "to":
                 items.append(_Space(size * 0.08))
                 items.append(_Text("→", size * 0.9, color))
                 items.append(_Space(size * 0.08))
-            elif cmd in ("geq", "leq", "neq", "approx", "infty", "cdot"):
-                ch2 = {"geq": "≥", "leq": "≤", "neq": "≠", "approx": "≈", "infty": "∞", "cdot": "·"}[cmd]
+            elif cmd in ("geq", "leq", "neq", "approx", "infty", "cdot", "pm"):
+                ch2 = {"geq": "≥", "leq": "≤", "neq": "≠", "approx": "≈", "infty": "∞", "cdot": "·", "pm": "±"}[cmd]
                 sp = size * (0.2 if cmd not in ("infty",) else 0.02)
                 items.append(_Space(sp))
                 items.append(_Text(ch2, size, color))
@@ -854,6 +874,8 @@ def text_img(text, size=40, color="ink", font_name="body9", max_w=1400, align="c
 
 def num(x, dec=1, unit=""):
     """Spanish decimal comma: 6.4 -> '6,4'."""
+    if abs(x) < 0.5 * 10 ** (-dec):
+        x = 0.0
     s = f"{x:.{dec}f}".replace(".", ",")
     if s.startswith("-"):
         s = "−" + s[1:]
@@ -912,7 +934,11 @@ def _person_front(cv, cx, top, h, shirt="grass", pants="kraft_d", hair="hair", g
     cv.rect(cx - 9 * s, top + 74 * s, cx + 9 * s, top + 96 * s, fill="skin_d")
     # head
     if girl:
-        cv.ellipse(cx, hy + 22 * s, hr * 1.12, hr * 1.25, fill=hair)
+        cv.ellipse(cx, hy - 2 * s, hr * 1.16, hr * 1.08, fill=hair)
+        for sg in (-1, 1):
+            cv.rect(cx + sg * hr * 0.78 - (hr * 0.38 if sg > 0 else 0), hy - 4 * s,
+                    cx + sg * hr * 0.78 + (0 if sg > 0 else hr * 0.38) + (hr * 0.38 if sg > 0 else -hr * 0.38) * 0 +
+                    (hr * 0.38 if sg > 0 else 0), hy + hr * 1.18, fill=hair, radius=8 * s)
     cv.circle(cx, hy, hr, fill="skin")
     if girl:
         cv.poly(greek.ellipse_pts(cx, hy - 6 * s, hr * 1.06, hr * 0.92, a0=180, a1=360), fill=hair)
@@ -1770,3 +1796,441 @@ def tree_top(r=60, seed=280):
 def stone_piece(r=22, seed=290):
     d = int(2 * r + 8)
     return _piece(d, d, lambda cv: cv.ellipse(d / 2, d / 2, r, r * 0.86, fill=(150, 136, 122)), seed=seed, rough=0.5)
+
+
+# ----------------------------------------------------------------------------
+# narration: numbers and units read aloud in Spanish ("44,1 m" -> "cuarenta y cuatro coma uno metros")
+# ----------------------------------------------------------------------------
+_UNITS_ES = ["cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once", "doce",
+             "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno",
+             "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho",
+             "veintinueve"]
+_TENS_ES = {30: "treinta", 40: "cuarenta", 50: "cincuenta", 60: "sesenta", 70: "setenta", 80: "ochenta", 90: "noventa"}
+_HUNDREDS_ES = {1: "ciento", 2: "doscientos", 3: "trescientos", 4: "cuatrocientos", 5: "quinientos", 6: "seiscientos",
+                7: "setecientos", 8: "ochocientos", 9: "novecientos"}
+
+
+def es_int(n):
+    """integer -> Spanish words (0 <= n < 10**9)"""
+    n = int(n)
+    if n < 30:
+        return _UNITS_ES[n]
+    if n < 100:
+        t, u = divmod(n, 10)
+        return _TENS_ES[t * 10] + ("" if u == 0 else " y " + _UNITS_ES[u])
+    if n < 1000:
+        h, r = divmod(n, 100)
+        if n == 100:
+            return "cien"
+        return _HUNDREDS_ES[h] + ("" if r == 0 else " " + es_int(r))
+    if n < 10 ** 6:
+        th, r = divmod(n, 1000)
+        head = "mil" if th == 1 else _apocope(es_int(th)) + " mil"
+        return head + ("" if r == 0 else " " + es_int(r))
+    m, r = divmod(n, 10 ** 6)
+    head = "un millón" if m == 1 else _apocope(es_int(m)) + " millones"
+    return head + ("" if r == 0 else " " + es_int(r))
+
+
+def _apocope(words):
+    """'uno' -> 'un', 'veintiuno' -> 'veintiún' (before a masculine noun)"""
+    if words.endswith("veintiuno"):
+        return words[:-len("veintiuno")] + "veintiún"
+    if words.endswith("uno"):
+        return words[:-3] + "un"
+    return words
+
+
+def es_number(s, masculine_noun=False):
+    """'44,1' -> 'cuarenta y cuatro coma uno'; '0,05' -> 'cero coma cero cinco'"""
+    neg = s[:1] in "−-"
+    s = s.lstrip("−-")
+    if "," in s or "." in s:
+        a, b = re.split(r"[,.]", s, 1)
+        dec = " ".join(_UNITS_ES[int(c)] for c in b) if b.startswith("0") else es_int(int(b))
+        out = es_int(int(a)) + " coma " + dec
+    else:
+        out = es_int(int(s))
+        if masculine_noun:
+            out = _apocope(out)
+    return ("menos " if neg else "") + out
+
+
+_UNIT_WORDS = [("m/s²", "metro por segundo al cuadrado", "metros por segundo al cuadrado"),
+               ("m/s2", "metro por segundo al cuadrado", "metros por segundo al cuadrado"),
+               ("m/s", "metro por segundo", "metros por segundo"),
+               ("km/h", "kilómetro por hora", "kilómetros por hora"),
+               ("km", "kilómetro", "kilómetros"), ("min", "minuto", "minutos"), ("m", "metro", "metros"),
+               ("s", "segundo", "segundos"), ("h", "hora", "horas")]
+_NUM_RE = re.compile(r"(?<![\w,.])([−-]?\d+(?:[,.]\d+)?)(?:\s?(m/s²|m/s2|m/s|km/h|km|min|m|s|h)(?![\w/²]))?")
+
+
+def _say_number(m):
+    num, unit = m.group(1), m.group(2)
+    if not unit:
+        return es_number(num)
+    sing, plur = next((a, b) for u, a, b in _UNIT_WORDS if u == unit)
+    is_one = num.lstrip("−-") == "1"
+    if unit == "h":
+        words = es_number(num)
+        if words.endswith("uno") and not ("," in num or "." in num):
+            words = words[:-3] + "una"
+        return f"{words} {sing if is_one else plur}"
+    return f"{es_number(num, masculine_noun=True)} {sing if is_one else plur}"
+
+
+SYMBOLS_SPOKEN = {
+    "x₀": "equis cero", "v₀": "uve cero", "y₀": "i griega cero", "t₀": "te cero", "Δx": "delta equis",
+    "Δt": "delta te", "Δv": "delta uve", "Δy": "delta i griega", "xA": "equis a", "xB": "equis be",
+    "v²": "uve al cuadrado", "t²": "te al cuadrado", "÷": " entre ", "×": " por ", "·": " por ", "≈": " aproximadamente ",
+}
+
+
+def enable_spoken_numbers():
+    """make the narrator read numbers, units and a few symbols in words (display text keeps the digits)"""
+    for k, v in SYMBOLS_SPOKEN.items():
+        movie.PRONOUNCE[re.escape(k)] = v
+    movie.PRONOUNCE[r"«|»"] = ""
+    movie.PRONOUNCE[_NUM_RE.pattern] = _say_number
+
+
+# ----------------------------------------------------------------------------
+# graphs (x-t, v-t, a-t) drawn as motion graphics, plotted live while the mobile moves
+# ----------------------------------------------------------------------------
+class Graph:
+    """Screen box: left x0, bottom y0 (of the plotting area), width w, height h.
+    Data: t in [0, tmax], value in [vmin, vmax]."""
+
+    def __init__(self, x0, y0, w, h, tmax, vmin, vmax, tlabel=r"t\;\t{(s)}", vlabel=r"x\;\t{(m)}", tstep=1, vstep=5,
+                 tlab_every=1, vlab_every=1, color="ink", size=30):
+        self.x0, self.y0, self.w, self.h = x0, y0, w, h
+        self.tmax, self.vmin, self.vmax = tmax, vmin, vmax
+        self.tlabel, self.vlabel = tlabel, vlabel
+        self.tstep, self.vstep = tstep, vstep
+        self.tlab_every, self.vlab_every = tlab_every, vlab_every
+        self.color, self.size = color, size
+
+    def X(self, t):
+        return self.x0 + t / self.tmax * self.w
+
+    def Y(self, v):
+        return self.y0 - (v - self.vmin) / (self.vmax - self.vmin) * self.h
+
+    def P(self, t, v):
+        return self.X(t), self.Y(v)
+
+    @property
+    def zero_y(self):
+        return self.Y(min(max(0.0, self.vmin), self.vmax))
+
+    def axes(self, L, g=1.0, grid=True, alpha=1.0):
+        """g: drawing progress 0..1"""
+        if g <= 0:
+            return
+        c, sz = self.color, self.size
+        top = self.y0 - self.h - 30
+        right = self.x0 + self.w + 30
+        zy = self.zero_y
+        if grid and g >= 1:
+            k = self.tstep
+            while k <= self.tmax + 1e-9:
+                L.line([(self.X(k), self.y0), (self.X(k), self.y0 - self.h)], (196, 164, 130), 1.4, alpha=0.55 * alpha)
+                k += self.tstep
+            v = math.ceil(self.vmin / self.vstep) * self.vstep
+            while v <= self.vmax + 1e-9:
+                if abs(v) > 1e-9:
+                    L.line([(self.x0, self.Y(v)), (self.x0 + self.w, self.Y(v))], (196, 164, 130), 1.4,
+                           alpha=0.55 * alpha)
+                v += self.vstep
+        L.arrow((self.x0, self.y0 + (12 if self.vmin >= 0 else 0)), (self.x0, self.y0 - (self.y0 - top) * g), c, 4.5,
+                head=20, alpha=alpha)
+        L.arrow((self.x0 - 12, zy), (self.x0 - 12 + (right - self.x0 + 12) * g, zy), c, 4.5, head=20, alpha=alpha)
+        if g < 1:
+            return
+        L.stamp(formula(self.vlabel, sz), self.x0 + 12, top - 6, "lb", alpha=alpha)
+        L.stamp(formula(self.tlabel, sz), right + 8, zy, "lm", alpha=alpha)
+        k, i = self.tstep, 1
+        while k <= self.tmax + 1e-9:
+            L.line([(self.X(k), zy - 7), (self.X(k), zy + 7)], c, 2.5, alpha=alpha)
+            if i % self.tlab_every == 0:
+                L.stamp(formula(r"\t{%s}" % _fmt(k), sz * 0.8), self.X(k), zy + 24, alpha=alpha)
+            k += self.tstep
+            i += 1
+        v = math.ceil(self.vmin / self.vstep) * self.vstep
+        i = 0
+        while v <= self.vmax + 1e-9:
+            if abs(v) > 1e-9:
+                L.line([(self.x0 - 7, self.Y(v)), (self.x0 + 7, self.Y(v))], c, 2.5, alpha=alpha)
+                if round(v / self.vstep) % self.vlab_every == 0:
+                    L.stamp(formula(r"\t{%s}" % _fmt(v), sz * 0.8), self.x0 - 14, self.Y(v), "rm", alpha=alpha)
+            v += self.vstep
+            i += 1
+        L.stamp(formula(r"\t{0}", sz * 0.8), self.x0 - 14, zy + 16, "rm", alpha=alpha)
+
+    def curve(self, L, f, t0, t1, color, width=6, n=90, dash=None, alpha=1.0):
+        if t1 <= t0:
+            return []
+        pts = [self.P(t0 + (t1 - t0) * k / n, f(t0 + (t1 - t0) * k / n)) for k in range(n + 1)]
+        L.line(pts, color, width, dash=dash, alpha=alpha)
+        return pts
+
+    def dot(self, L, t, v, color="ink", r=8, alpha=1.0):
+        L.circle(*self.P(t, v), r, fill=color, stroke="cream", width=2, alpha=alpha)
+
+    def guides(self, L, t, v, color="ink", tlab=None, vlab=None, alpha=1.0, size=None):
+        """dashed lines from the point to both axes, with optional labels"""
+        sz = size or self.size * 0.85
+        px, py = self.P(t, v)
+        zy = self.zero_y
+        L.line([(px, py), (px, zy)], color, 2.5, dash=[8, 7], alpha=alpha)
+        L.line([(px, py), (self.x0, py)], color, 2.5, dash=[8, 7], alpha=alpha)
+        if tlab:
+            L.stamp(tag_img(tlab, sz, color), px, zy + (62 if v >= 0 else -44), alpha=alpha)
+        if vlab:
+            L.stamp(tag_img(vlab, sz, color), self.x0 + 8, py - 24, "lm", alpha=alpha)
+
+    def slope(self, L, f, t1, t2, color="ink", g=1.0, dt_lab=None, dv_lab=None, size=None):
+        """slope triangle between t1 and t2 under/over the line"""
+        sz = size or self.size * 0.9
+        a, b = self.P(t1, f(t1)), self.P(t2, f(t2))
+        c = (b[0], a[1])
+        if g <= 0:
+            return
+        L.line([a, lerp2(a, c, min(1, g * 2))], color, 4)
+        if g > 0.5:
+            L.line([c, lerp2(c, b, (g - 0.5) * 2)], color, 4)
+        if g >= 1:
+            if dt_lab:
+                L.stamp(tag_img(dt_lab, sz, color), (a[0] + c[0]) / 2, a[1] + (30 if b[1] < a[1] else -30))
+            if dv_lab:
+                L.stamp(tag_img(dv_lab, sz, color), c[0] + 16, (c[1] + b[1]) / 2, "lm")
+
+    def area(self, L, f, t0, t1, fill, alpha=1.0, n=60, base=0.0):
+        if t1 <= t0:
+            return
+        pts = [self.P(t0, base)] + [self.P(t0 + (t1 - t0) * k / n, f(t0 + (t1 - t0) * k / n)) for k in range(n + 1)] + \
+              [self.P(t1, base)]
+        L.poly(pts, fill=fill, alpha=alpha)
+
+
+def _fmt(v):
+    if abs(v - round(v)) < 1e-9:
+        return "%d" % round(v)
+    return ("%g" % v).replace(".", ",")
+
+
+# ----------------------------------------------------------------------------
+# stroboscopic photos ("una foto cada segundo") and other helpers
+# ----------------------------------------------------------------------------
+_GHOSTS = {}
+
+
+def ghost(spr, alpha=0.35):
+    key = (id(spr), round(alpha, 2))
+    g = _GHOSTS.get(key)
+    if g is None:
+        img = spr.img.copy()
+        img.putalpha(img.getchannel("A").point(lambda v: int(v * alpha)))
+        g = Sprite(img, shadow_blur=3, pad=0, shadow=False)
+        _GHOSTS[key] = (g, spr)
+        return g
+    return g[0]
+
+
+def put(sc, spr, x, y, at, enter="drop", rot=None, **kw):
+    if rot is None:
+        rot = ((_seed(f"{x:.0f}|{y:.0f}") % 100) / 100 - 0.5) * 2.4
+    return sc.add(spr, x, y, at=at, enter=enter, rot=rot, **kw)
+
+
+def scn(mv, name, **kw):
+    kw.setdefault("transition", "cut")
+    kw.setdefault("sweep", True)
+    return mv.scene(name, **kw)
+
+
+def board(sc, lines, x, y, size=46, gap=16, align="l", write=0.55, z=6, color="ink", until=None):
+    """Write formula lines one under another, each appearing at its own time with a 'being written' reveal.
+    lines = [(src, t)] ; x = left edge (align 'l') or centre ('c'); y = top of the first line.
+    Returns the list of y centres (to place marks next to the lines)."""
+    imgs = [formula(src, size, color) for src, _ in lines]
+    ys = []
+    yy = y
+    for im in imgs:
+        ys.append(yy + im.height / 2)
+        yy += im.height + gap
+
+    def fn(L, t):
+        for (src, t0), im, yc in zip(lines, imgs, ys):
+            p = prog(t, t0, write, "lin")
+            if p <= 0:
+                continue
+            L.stamp(im, x if align == "l" else x - im.width / 2, yc, "lm", reveal=p)
+    mg(sc, fn, at=min(t for _, t in lines), until=until, z=z, shadow=False)
+    return ys
+
+
+def sheet(w, h, seed=0, lines=True, color="cream"):
+    """a sheet of lined notebook paper (as a paper piece) to write the solutions on"""
+    def draw(cv):
+        cv.rect(0, 0, w, h, fill=color)
+        if lines:
+            for yy in range(70, int(h) - 20, 56):
+                cv.line([(24, yy), (w - 24, yy)], (226, 206, 180), 2)
+            cv.line([(70, 10), (70, h - 10)], (236, 160, 140), 2.5)
+    return _piece(int(w), int(h), draw, seed=seed, rough=0.5, texture=6)
+
+
+# ----------------------------------------------------------------------------
+# more props: bicycle with rider, ball, building, Ana throwing
+# ----------------------------------------------------------------------------
+@functools.lru_cache(maxsize=32)
+def bike_sprite(rider="ana", spin=0, face=1, h=250, seed=300):
+    """side view of a bicycle with a rider; spin = 0..3 (wheel spokes rotated 22.5° each step)"""
+    s = h / 250.0
+    w = int(330 * s)
+    hh = int(h + 40 * s)
+    wr = 52 * s
+    w1, w2 = (78 * s, hh - wr - 6 * s), (w - 78 * s, hh - wr - 6 * s)
+    shirt, pants = ("mustard", "train_d") if rider == "ana" else ("grass", "kraft_d")
+    frame_c = "acc" if rider == "ana" else "brown"
+
+    def wheels(cv):
+        for (cx, cy) in (w1, w2):
+            cv.circle(cx, cy, wr, fill=None, outline="ink", width=7 * s)
+            for k in range(4):
+                a = math.radians(spin * 22.5 + k * 45)
+                cv.line([(cx - math.cos(a) * wr * 0.9, cy - math.sin(a) * wr * 0.9),
+                         (cx + math.cos(a) * wr * 0.9, cy + math.sin(a) * wr * 0.9)], (120, 110, 100), 2.4 * s)
+            cv.circle(cx, cy, 7 * s, fill="ink")
+
+    def frame(cv):
+        seat = (w * 0.40, hh - 150 * s)
+        crank = (w * 0.47, w1[1])
+        head = (w * 0.72, hh - 160 * s)
+        cv.line([w1, crank, seat, w1], frame_c, 7 * s)
+        cv.line([crank, head, seat], frame_c, 7 * s)
+        cv.line([head, w2], frame_c, 7 * s)
+        cv.line([(head[0] - 6 * s, head[1] - 14 * s), (head[0] + 16 * s, head[1] - 22 * s)], "ink", 6 * s)
+        cv.rect(seat[0] - 22 * s, seat[1] - 8 * s, seat[0] + 18 * s, seat[1] + 2 * s, fill="ink", radius=4 * s)
+        cv.circle(*crank, 10 * s, fill="ink")
+
+    def rider_back(cv):
+        seat = (w * 0.40, hh - 150 * s)
+        crank = (w * 0.47, w1[1])
+        a = math.radians(spin * 90 + 180)
+        foot = (crank[0] + math.cos(a) * 22 * s, crank[1] + math.sin(a) * 22 * s)
+        cv.line([(seat[0] + 4 * s, seat[1] - 6 * s), ((seat[0] + foot[0]) / 2 + 26 * s, (seat[1] + foot[1]) / 2 - 8 * s),
+                 foot], pants, 18 * s)
+
+    def rider_front(cv):
+        seat = (w * 0.40, hh - 150 * s)
+        crank = (w * 0.47, w1[1])
+        a = math.radians(spin * 90)
+        foot = (crank[0] + math.cos(a) * 22 * s, crank[1] + math.sin(a) * 22 * s)
+        knee = ((seat[0] + foot[0]) / 2 + 30 * s, (seat[1] + foot[1]) / 2 - 10 * s)
+        cv.line([(seat[0] + 4 * s, seat[1] - 6 * s), knee, foot], pants, 19 * s)
+        cv.ellipse(foot[0] + 6 * s, foot[1] + 4 * s, 14 * s, 7 * s, fill="ink")
+        hip = (seat[0] + 2 * s, seat[1] - 14 * s)
+        sh = (w * 0.56, hh - 222 * s)
+        cv.line([hip, sh], shirt, 30 * s)
+        hand = (w * 0.72 + 8 * s, hh - 178 * s)
+        cv.line([sh, ((sh[0] + hand[0]) / 2, (sh[1] + hand[1]) / 2 + 6 * s), hand], shirt, 13 * s)
+        cv.circle(*hand, 7 * s, fill="skin")
+        if rider == "ana":
+            _ana_profile_head(cv, sh[0] + 14 * s, sh[1] - 34 * s, 0.95 * s, face=1)
+        else:
+            hx, hy = sh[0] + 14 * s, sh[1] - 34 * s
+            r = 24 * s
+            cv.circle(hx, hy, r, fill="skin")
+            cv.poly(greek.ellipse_pts(hx - 2 * s, hy - 7 * s, r * 1.05, r * 0.85, a0=180, a1=360), fill="hair")
+            cv.rect(hx - r, hy - 10 * s, hx - r * 0.5, hy + 6 * s, fill="hair")
+            cv.circle(hx + 12 * s, hy - 1 * s, 3.4 * s, fill="ink")
+            cv.poly([(hx + r * 0.8, hy - 2 * s), (hx + r + 6 * s, hy + 5 * s), (hx + r * 0.75, hy + 8 * s)], fill="skin")
+    spr = _layered(w, hh, [rider_back, wheels, frame, rider_front], seed=seed + spin + (50 if rider != "ana" else 0),
+                   rough=0.4, shadow_blur=4)
+    if face < 0:
+        spr = Sprite(spr.img.transpose(Image.FLIP_LEFT_RIGHT), shadow_blur=4, pad=0)
+    return spr
+
+
+def bike_at(rider, dist_px, face=1, h=250):
+    """sprite of the bike for a travelled distance (wheels turn with the distance)"""
+    wr = 52 * h / 250.0
+    spin = int((dist_px / wr) / math.radians(22.5)) % 4
+    return bike_sprite(rider, spin, face, h)
+
+
+@functools.lru_cache(maxsize=8)
+def ball_piece(r=26, color="acc", seed=310):
+    d = int(2 * r + 8)
+
+    def draw(cv):
+        cv.circle(d / 2, d / 2, r, fill=color)
+        cv.arc(d / 2, d / 2, r * 0.8, r * 0.8, 200, 320, "cream", max(2, r * 0.14))
+        cv.arc(d / 2, d / 2, r * 0.8, r * 0.8, 20, 140, "cream", max(2, r * 0.14))
+    return _piece(d, d, draw, seed=seed, rough=0.3)
+
+
+@functools.lru_cache(maxsize=4)
+def building_piece(w=300, h=640, floors=6, seed=320, color="cream", roof="train"):
+    def body(cv):
+        cv.rect(0, 30, w, h, fill=color)
+        cv.rect(-6, 10, w + 6, 40, fill=roof)
+
+    def windows(cv):
+        fh = (h - 60) / floors
+        for f in range(floors):
+            y = 50 + f * fh
+            for k in range(2):
+                x = 40 + k * (w - 160) / 1 if False else (50 + k * (w - 150))
+                cv.rect(x, y + fh * 0.22, x + 50, y + fh * 0.72, fill="glass", radius=4)
+                cv.line([(x + 25, y + fh * 0.22), (x + 25, y + fh * 0.72)], "brown", 3)
+        cv.rect(w / 2 - 34, h - 100, w / 2 + 34, h, fill="brown", radius=6)
+    return _layered(w, h, [body, windows], seed=seed, rough=0.5)
+
+
+@functools.lru_cache(maxsize=8)
+def ana_arm_up(h=290, seed=63, face=1):
+    """Ana front view with the right arm raised (to throw or drop a ball)"""
+    w = int(h * 0.62)
+
+    def draw(cv):
+        _person_front(cv, w / 2, 4, h, shirt="mustard", pants="train_d", girl=True)
+        s = h / 300.0
+        cx = w / 2
+        cv.poly([(cx + 40 * s, 100 * s), (cx + 56 * s, 96 * s), (cx + 74 * s, 10 * s), (cx + 58 * s, 6 * s)],
+                fill="mustard")
+        cv.circle(cx + 66 * s, 6 * s, 10 * s, fill="skin")
+    spr = _piece(w, h + 12, draw, seed=seed, rough=0.5)
+    return spr
+
+
+def step_list(sc, steps, x, y, at_times, size=34, w=520, done_times=None, z=5):
+    """a vertical checklist (the exam method). Each step appears at its time; the current one is highlighted
+    and gets a check mark when done."""
+    imgs = [text_img(t, size, "ink", "body9", 700, "left") for t in steps]
+    imgs_on = [text_img(t, size, "cream", "body9", 700, "left") for t in steps]
+
+    def fn(L, t):
+        yy = y
+        for k, (im, im_on) in enumerate(zip(imgs, imgs_on)):
+            t0 = at_times[k]
+            a = prog(t, t0, 0.35, "out")
+            if a <= 0:
+                yy += im.height + 26
+                continue
+            done = done_times and done_times[k] is not None and t >= done_times[k]
+            active = t >= t0 and not done and (k + 1 >= len(at_times) or t < at_times[k + 1])
+            hgt = im.height + 14
+            L.poly([(x, yy), (x + w, yy), (x + w, yy + hgt), (x, yy + hgt)],
+                   fill="pos" if active else (251, 245, 230), stroke="ink" if not active else None, width=2, alpha=a)
+            L.stamp(im_on if active else im, x + 52, yy + hgt / 2, "lm", alpha=a)
+            L.circle(x + 26, yy + hgt / 2, 14, fill="cream" if active else "mustard", stroke="ink", width=2, alpha=a)
+            L.stamp(formula(r"\b{%d}" % (k + 1), 22), x + 26, yy + hgt / 2 + 1, alpha=a)
+            if done:
+                c = prog(t, done_times[k], 0.3, "out")
+                L.line([(x + w - 46, yy + hgt / 2), (x + w - 34, yy + hgt / 2 + 12), (x + w - 12, yy + hgt / 2 - 14)],
+                       "grass_d", 6 * c + 0.1, alpha=c)
+            yy += hgt + 12
+    return mg(sc, fn, at=min(at_times), z=z, shadow=True)
