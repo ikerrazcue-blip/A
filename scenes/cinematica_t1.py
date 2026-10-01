@@ -531,9 +531,9 @@ def posicion(mv):
     l8 = sc.say("Comprueba: ¿cuánto mide la flecha del vector posición?")
     q = F.tabbed(F.say_card("¿Cuánto mide {pos:r}?", size=44, border=("mustard", 4)), "COMPRUEBA",
                  head_bg="mustard", head_color="ink")
-    e_q = put(sc, q, 1560, 820, l8.start(), rot=-1)
+    e_q = put(sc, q, 1480, 820, l8.start(), rot=-1)
     sc.jingle(l8.start(), "fis_quiz", gain=0.3)
-    t_ans = F.think(sc, 3.5, x=1830, y=820, r=52)
+    t_ans = F.think(sc, 3.5, x=1480 + q.vw / 2 + 72, y=820, r=50)
     l9 = sc.say("La flecha es la hipotenusa de un triángulo rectángulo de catetos 4 y 3. Por Pitágoras, raíz de 16 "
                 "más 9: 5 metros.",
                 tts="La flecha es la hipotenusa de un triángulo rectángulo de catetos cuatro y tres. Por Pitágoras, "
@@ -1121,9 +1121,9 @@ def honda(mv):
     A_REL = math.radians(-90)        # release point: the top of the circle
     top = (C[0], C[1] - R)
     l1 = sc.say("Compruébalo con una honda. La piedra gira atada a una cuerda. Si la soltamos justo aquí, ¿por dónde "
-                "saldrá: por A, por B o por C?",
+                "saldrá: por la A, por la B o por la C?",
                 tts="Compruébalo con una honda. La piedra gira atada a una cuerda. Si la soltamos justo aquí, ¿por "
-                    "dónde saldrá: por a, por be, o por ce?")
+                    "dónde saldrá: por la a, por la be, o por la ce?")
     F.quiz(sc, "Soltamos la piedra aquí. ¿Por dónde sale: A, B o C?", lead=l1.start(), x=1490, y=200, size=42,
            max_w=700)
     hand = F.icon_piece("hand", 150, "skin")
@@ -1144,7 +1144,7 @@ def honda(mv):
         L.circle(*C, R, stroke=(150, 130, 110), width=3, dash=[10, 10], alpha=0.6)
         if "t" not in rel or t < rel["t"]:
             L.line([C, (x, y)], "brown", 4)
-        g = prog(t, l1.at("por A") - 0.2, 0.5, "out")
+        g = prog(t, l1.at("por la A") - 0.2, 0.5, "out")
         if g > 0:
             L.arrow(top, (top[0], top[1] - 240 * g), "ink", 4, dash=[12, 9], head=22)
             L.stamp(F.tag_img(r"\b{A}", 44), top[0] + 40, top[1] - 230)
@@ -1156,10 +1156,12 @@ def honda(mv):
             L.stamp(F.tag_img(r"\b{C}", 44), cpts[-1][0] + 34, cpts[-1][1])
     live(sc, stone_at, at=0.0, z=5, jitter=0.4)
     mg(sc, rope, at=0.0, z=4)
-    t_ans = F.think(sc, 4.0)
+    t_ans = F.think(sc, 4.0, x=1490, y=400)
     rel["t"] = t_ans + 0.5
-    l2 = sc.say("Por B: por la tangente. Sin la cuerda, la piedra sigue en línea recta, en la dirección que tenía su "
-                "velocidad en ese instante.")
+    l2 = sc.say("Por la B: por la tangente. Sin la cuerda, la piedra sigue en línea recta, en la dirección que tenía "
+                "su velocidad en ese instante.",
+                tts="Por la be: por la tangente. Sin la cuerda, la piedra sigue en línea recta, en la dirección que "
+                    "tenía su velocidad en ese instante.")
 
     def vtan(L, t):
         g = prog(t, t_ans, 0.4, "out")
@@ -1527,10 +1529,10 @@ def componentes(mv):
                 "Cambia la dirección de la velocidad: es la que te hace girar.")
     t_n = l5.at("normal")
     l6 = sc.say("Su valor es la velocidad al cuadrado dividida entre el radio de la curva.")
-    l7 = sc.say("Por ejemplo, a 10 metros por segundo, en una curva de 20 metros de radio: 100 entre 20, 5 metros "
+    l7 = sc.say("Por ejemplo, a 10 metros por segundo, en una curva de 20 metros de radio: 100 entre 20 da 5 metros "
                 "por segundo al cuadrado.",
-                tts="Por ejemplo, a diez metros por segundo, en una curva de veinte metros de radio: cien entre veinte, "
-                    "cinco metros por segundo al cuadrado.")
+                tts="Por ejemplo, a diez metros por segundo, en una curva de veinte metros de radio: cien entre veinte "
+                    "da cinco metros por segundo al cuadrado.")
     l8 = sc.say("Comprobación visual: si abrimos la curva, el radio crece, y la aceleración normal se hace cada vez "
                 "más pequeña. Una recta es como una curva de radio infinito: no tiene aceleración normal.")
     t_open = l8.at("abrimos", after=-0.2)
