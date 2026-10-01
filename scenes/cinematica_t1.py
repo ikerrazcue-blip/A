@@ -151,13 +151,11 @@ def tren(mv):
     props = []
     lamp = F.lamp_post()
     bench = F.bench()
-    sign = F.station_sign()
     x = 900
     while x < span[1]:
         props.append((lamp, x, PLAT - lamp.vh / 2 + 6, 1.0, 0.8))
         props.append((bench, x + 520, PLAT - bench.vh / 2 + 10, 1.0, 0.8))
         x += 1500
-    props.append((sign, LEO_W - 1100, PLAT - sign.vh / 2 + 6, 1.0, 0.8))
     F.world(sc, props, cam, at=0.0, z=2)
 
     def train_at(t):
@@ -776,11 +774,11 @@ def check_ida(mv):
                     "Desplazamiento: cien metros, hacia la panadería.")
     e_q.leave(t_rev, "fall", 0.5)
     fs = F.fcard(r"\c{space}{s} = 300 + 200 = 500\,\t{m}", size=50, border=("space", 4))
-    put(sc, fs, 560, 250, l2.at("500"), rot=1, z=6)
-    put(sc, F.check_mark(90), 560 + fs.vw / 2 + 50, 250, l2.at("500"), enter="pop", z=7)
+    put(sc, fs, 440, 250, l2.at("500"), rot=1, z=6)
+    put(sc, F.check_mark(90), 440 + fs.vw / 2 + 50, 250, l2.at("500"), enter="pop", z=7)
     fd = F.fcard(r"|\c{disp}{Δ\vec{r}}| = 100\,\t{m}\t{ (hacia la panadería)}", size=50, border=("disp", 4))
-    put(sc, fd, 1340, 250, l2.at("100 metros, hacia"), rot=-1, z=6)
-    put(sc, F.check_mark(90), 1340 + fd.vw / 2 + 50, 250, l2.at("panadería"), enter="pop", z=7)
+    put(sc, fd, 1380, 250, l2.at("100 metros, hacia"), rot=-1, z=6)
+    put(sc, F.check_mark(90), 1380 + fd.vw / 2 + 40, 250, l2.at("panadería"), enter="pop", z=7)
     sc.wait(0.3)
 
     sc = scn(mv, "coinciden", bg="grid", lead=0.3)
@@ -921,12 +919,13 @@ def velocidad_media(mv):
             L.line([(a[0], a[1] - 12), (a[0], a[1] + 12)], "vel_d", 3)
             L.stamp(F.formula(r"\t{5 m en 1 s}", 26, "vel_d"), (a[0] + b[0]) / 2, a[1] - 26, alpha=g)
     mg(sc, split, at=t_split, z=5)
+    put(sc, F.fcard(r"v_m = \frac{20\,\t{m}}{4\,\t{s}} = 5\,\t{m/s}", size=50, border=("vel", 3)), 640, 290,
+        l4.at("20 metros en"), rot=1, z=7)
     l5 = sc.say("Es decir, la {vel:velocidad media} es el desplazamiento dividido entre el intervalo de tiempo. Se "
                 "mide en metros por segundo.")
-    fm = F.def_card("VELOCIDAD MEDIA", [r"\c{vel}{\vec{v}_m} = \frac{\c{disp}{Δ\vec{r}}}{Δt}",
-                                        r"v_m = \frac{20\,\t{m}}{4\,\t{s}} = 5\,\t{m/s}"], head_bg="vel", size=56,
+    fm = F.def_card("VELOCIDAD MEDIA", [r"\c{vel}{\vec{v}_m} = \frac{\c{disp}{Δ\vec{r}}}{Δt}"], head_bg="vel", size=60,
                     border=("vel", 4))
-    put(sc, fm, 1520, 760, l5.at("velocidad media"), rot=-0.8, z=7)
+    put(sc, fm, 1560, 700, l5.at("velocidad media"), rot=-0.8, z=7)
     l6 = sc.say("Y como el desplazamiento es un vector, la velocidad media también: tiene su misma dirección y su "
                 "mismo sentido.")
     t_vm = l6.at("también")
@@ -1469,19 +1468,19 @@ def acel_def(mv):
                 "cambiar.")
     f1 = F.def_card("ACELERACIÓN MEDIA", [r"\c{acc}{\vec{a}_m} = \frac{Δ\vec{v}}{Δt} = \frac{\vec{v}_f − "
                                           r"\vec{v}_0}{Δt}"], head_bg="acc", size=54, border=("acc", 4))
-    put(sc, f1, 1440, 330, l2.at("aceleración media"), rot=-0.8)
+    put(sc, f1, 1440, 300, l2.at("aceleración media"), rot=-0.8)
     l3 = sc.say("Y la {acc:aceleración instantánea}, como antes, es su límite cuando delta te tiende a cero: de uve "
                 "entre de te.")
     f2 = F.def_card("ACELERACIÓN INSTANTÁNEA", [r"\c{acc}{\vec{a}} = \lim{Δt\to0}\frac{Δ\vec{v}}{Δt} = "
                                                 r"\frac{d\vec{v}}{dt}"], head_bg="acc", size=54, border=("acc", 4))
-    put(sc, f2, 1440, 600, l3.at("instantánea"), rot=0.8)
+    put(sc, f2, 1440, 548, l3.at("instantánea"), rot=0.8)
     l4 = sc.say("Se mide en metros por segundo al cuadrado. Al arrancar, nuestro coche ganaba 2 metros por segundo "
                 "cada segundo: su aceleración era de 2 metros por segundo al cuadrado.",
                 tts="Se mide en metros por segundo al cuadrado. Al arrancar, nuestro coche ganaba dos metros por "
                     "segundo cada segundo: su aceleración era de dos metros por segundo al cuadrado.")
-    f3 = F.fcard([r"\t{Unidad: }\b{m/s}^2", r"a = \frac{8\,\t{m/s} − 0}{4\,\t{s}} = 2\,\t{m/s}^2"], size=48,
+    f3 = F.fcard([r"\t{Unidad: }\b{m/s}^2", r"a = \frac{8\,\t{m/s} − 0}{4\,\t{s}} = 2\,\t{m/s}^2"], size=44,
                  border=("acc", 3))
-    put(sc, f3, 560, 760, l4.at("metros por segundo al cuadrado"), rot=-1)
+    put(sc, f3, 1440, 778, l4.at("metros por segundo al cuadrado"), rot=-1)
     sc.wait(0.5)
 
 
@@ -1752,8 +1751,8 @@ if __name__ == "__main__":
                 mv.still(t, os.path.join(d, f"{i:02d}_{sc.name}_{t:06.1f}.png"))
     else:
         chs = chapters(mv)
-        # 12 fps, CRF 27 with x264's animation tuning and 96 kb/s mono audio: ~2 MB per minute
-        mv.render(out, chapters=chs, crf=27, abr="96k", tune="animation")
+        # 12 fps, CRF 27 with x264's animation tuning and 64 kb/s mono audio: < 30 MB for the 13 minutes
+        mv.render(out, chapters=chs, crf=27, abr="64k", tune="animation")
         with open(os.path.splitext(out)[0] + "_capitulos.txt", "w", encoding="utf-8") as f:
             for st, ttl in chs:
                 f.write("%d:%02d  %s\n" % (st // 60, st % 60, ttl))
