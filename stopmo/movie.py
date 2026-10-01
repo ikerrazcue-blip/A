@@ -448,10 +448,16 @@ class Owl(Element):
 # ----------------------------------------------------------------------------
 # scenes
 # ----------------------------------------------------------------------------
+# other themes register their own tables here: kind -> fn(width, height, seed) -> RGBA
+BACKGROUNDS = {}
+
+
 @functools.lru_cache(maxsize=16)
 def background(kind, seed=0):
     cw, ch = W + 2 * M, H + 2 * M
-    if kind == "terra":
+    if kind in BACKGROUNDS:
+        img = BACKGROUNDS[kind](cw, ch, seed)
+    elif kind == "terra":
         img = gfx.paper_rgb(cw, ch, "terra", strength=12, seed=seed).convert("RGBA")
         img.alpha_composite(greek.meander_band(cw, 70, bg="black", fg="terra_l", seed=seed + 1), dest=(0, M - 4))
         img.alpha_composite(greek.meander_band(cw, 70, bg="black", fg="terra_l", seed=seed + 2),
@@ -636,9 +642,10 @@ def subtitle_sprite(text):
 # ----------------------------------------------------------------------------
 class Movie:
     def __init__(self, voice="davefx", speed=0.9, subtitles=True, bg_seed=3, voice_fx=None, boil=2, shake=0.0,
-                 flicker=0.012):
+                 flicker=0.012, wipe="greek"):
         self.voice = Voice(voice, speed, **(voice_fx or {}))
         self.boil, self.shake, self.flicker = boil, shake, flicker
+        self.wipe = wipe
         self.scenes = []
         self.subtitles = subtitles
         self.bg_seed = bg_seed
@@ -657,7 +664,8 @@ class Movie:
             if sc.sweep and not sc._swept:
                 t0 = sc.cursor + 0.05
                 live = [e for e in sc.elements if e.until is None]
-                live.sort(key=lambda e: -e.rest["x"])  # right-most first
+                # right-most first (pieces drawn by code can tell where they are with sweep_x)
+                live.sort(key=lambda e: -(e.sweep_x(t0) if hasattr(e, "sweep_x") else e.rest["x"]))
                 for i, e in enumerate(live):
                     e.leave(t0 + 0.035 * i, "slide_l", 0.5)
                 sc.tail = max(sc.tail, 0.62 + 0.035 * len(live))
@@ -711,7 +719,7 @@ class Movie:
             sc._env = None
             sc.voice_level(0)
         if self.wipes:
-            _wipe_sheet()
+            _wipe_sheet(self.wipe)
         self._built = True
         return self
 
@@ -760,7 +768,7 @@ class Movie:
         img = canvas.crop((M + dx, M + dy, M + dx + W, M + dy + H))
         for b in self.wipes:
             if b - 0.5 <= t < b + 0.5:
-                _draw_wipe(img, (t - (b - 0.5)) / 1.0)
+                _draw_wipe(img, (t - (b - 0.5)) / 1.0, self.wipe)
         if self.subtitles:
             cue = self.cue_at(t)
             if cue:
@@ -778,7 +786,8 @@ class Movie:
             self.build()
         self.frame(int(round(t * FPS))).save(path)
 
-    def render(self, path, workers=4, crf=27, preset="slow", t0=0.0, t1=None, srt=True, chapters=None):
+    def render(self, path, workers=4, crf=27, preset="slow", t0=0.0, t1=None, srt=True, chapters=None, abr="160k",
+               tune=None):
         if not self._built:
             self.build()
         t1 = self.total if t1 is None else min(t1, self.total)
@@ -789,8 +798,10 @@ class Movie:
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
                "-framerate", str(FPS), "-i", "-", "-i", wav, "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
                "-pix_fmt", "yuv420p", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-               "-c:a", "aac", "-b:a", "160k", "-ac", "1", "-ar", "48000",
+               "-c:a", "aac", "-b:a", abr, "-ac", "1", "-ar", "48000",
                "-shortest", "-movflags", "+faststart", path]
+        if tune:
+            cmd[cmd.index("-crf"):cmd.index("-crf")] = ["-tune", tune]
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         global _MOVIE
         _MOVIE = self
@@ -850,9 +861,15 @@ def _render_worker(fi):
     return _MOVIE.frame(fi).tobytes()
 
 
-@functools.lru_cache(maxsize=1)
-def _wipe_sheet():
+# other themes register their own wipe sheet here: style -> fn(width, height) -> RGBA
+WIPES = {}
+
+
+@functools.lru_cache(maxsize=4)
+def _wipe_sheet(style="greek"):
     sw = int(W * 1.18)
+    if style in WIPES:
+        return WIPES[style](sw, H)
     img = gfx.paper_rgb(sw, H, "terra", strength=12, seed=77).convert("RGBA")
     band = greek.meander_band(H, 64, bg="black", fg="terra_l", seed=78).rotate(90, expand=True)
     img.alpha_composite(band, dest=(0, 0))
@@ -863,8 +880,8 @@ def _wipe_sheet():
     return img
 
 
-def _draw_wipe(img, p):
-    sheet = _wipe_sheet()
+def _draw_wipe(img, p, style="greek"):
+    sheet = _wipe_sheet(style)
     sw = sheet.width
     # stepped (stop-motion) slide from right to left
     x = W + (-sw - W) * p
